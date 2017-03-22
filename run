@@ -1,0 +1,92 @@
+#!/bin/bash
+set -e
+set -x
+
+source environment.sh
+
+FLYWHEEL_BASE=/flywheel/v0
+IN=$FLYWHEEL_BASE/input
+OUT=$FLYWHEEL_BASE/output
+TMP=/tmp
+
+# the following lets output show on stdout and stderr, and also
+# redirects them to files that will appear in the output.
+# combines http://stackoverflow.com/a/692407 and http://stackoverflow.com/a/11886837
+exec > >(tee -i $OUT/stdout.log) 2> >(tee -i $OUT/stderr.log >&2)
+
+cd $TMP
+
+preprocess_nifti() {
+  # because the python script is a no-op for things that are
+  # correct, we can safely run it on data that has already been fixed.
+  RAW=$1
+  tmpdir=$(mktemp -d)
+
+  BASENAME=$(basename $RAW)
+  FIXED=$tmpdir/$BASENAME
+  # fix nifti header issue
+  python $FLYWHEEL_BASE/fix_nifti.py $RAW $FIXED
+
+  WITHOUT_EXT="${BASENAME%%.*}"
+
+  # converting input nifti to AFNI
+  3dcalc -a $FIXED -prefix $WITHOUT_EXT -expr 'a'
+  # XXX make sure WITHOUT_EXT was created?
+
+  echo $WITHOUT_EXT+orig
+}
+
+anatomical=$(preprocess_nifti $IN/anatomical/*)
+original_functional=$(preprocess_nifti $IN/functional/*)
+# This warp target should be in the same space as the anatomical.
+# In the future, this might be in the standard space.
+warp_target=$IN/warp_target/*
+
+# center to anatomical
+@Align_Centers -base $anatomical -dset $original_functional
+func=$(@GetAfniPrefix $original_functional)_shft+orig
+funcprefix=$(@GetAfniPrefix $func)
+
+# align to anatomical
+# XXX removed -giant_move
+# XXX does specifying that partial_axial help? XXX untested
+align_epi_anat.py -dset2 $func -dset1 $anatomical -dset2to1 -dset2_base 0 \
+  -suffix _func2anat -dset1_strip None -dset2_strip None \
+  -partial_coverage
+
+# XXX need 3dAllineate?? or is _func2anat enough?
+
+# warp from warp_target to centered functional. This warp uses nearest neighbor
+# interpolation, which makes it appropriate for segmentations.
+# XXX need to make this into 3dAllineate xxxx
+#3dNwarpApply -ainterp NN -short -nwarp \
+#   "INV(${funcprefix}_func2anat_mat.aff12.1D)" \
+#   -source $warp_target -master $func -prefix __tmp
+cat_matvec -ONELINE ${funcprefix}_func2anat_mat.aff12.1D -I \
+  > ${funcprefix}_anat2func_mat.aff12.1D
+3dAllineate -1Dmatrix_apply ${funcprefix}_anat2func_mat.aff12.1D \
+  -base $func -master BASE -source $warp_target -prefix __tmp
+
+funcsegprefix=$(@GetAfniPrefix $original_functional)_seg
+# uncenter this back to the original functional space
+@Align_Centers -base $original_functional -dset __tmp+orig -no_cp
+# change the datum type to byte to save space
+# this step also gets rid of the shift transform in the header
+3dcalc -a __tmp+orig -expr a -datum byte -nscale -prefix $funcsegprefix
+# copy segmentation information from atlas to this native-space
+#   segmentation dataset and mark to be shown with integer colormap
+3drefit -cmap INT_CMAP $funcsegprefix+orig
+3drefit -copytables $warp_target $funcsegprefix+orig
+
+# cleanup tmp files
+rm __tmp*
+
+# convert output to nifti
+for result in $funcsegprefix+orig.HEAD $original_functional.HEAD; do
+  3dAFNItoNIFTI $result
+  gzip $(@GetAfniPrefix $result).nii
+  mv $(@GetAfniPrefix $result).nii.gz $OUT
+done
+
+# copy to output directory
+mv *.aff12.1D $OUT
