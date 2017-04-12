@@ -64,9 +64,11 @@ align_epi_anat.py -dset2 $func -dset1 $anatomical -dset2to1 -dset2_base 0 \
 #   -source $warp_target -master $func -prefix __tmp
 cat_matvec -ONELINE ${funcprefix}_func2anat_mat.aff12.1D -I \
   > ${funcprefix}_anat2func_mat.aff12.1D
-3dAllineate -1Dmatrix_apply ${funcprefix}_anat2func_mat.aff12.1D \
-  -base $func -master BASE -source $warp_target -prefix __tmp
 
+# warp the warp target (this code assumes it is a segmentation)
+3dAllineate -1Dmatrix_apply ${funcprefix}_anat2func_mat.aff12.1D \
+  -final NN \
+  -base $func -master BASE -source $warp_target -prefix __tmp
 funcsegprefix=$(@GetAfniPrefix $original_functional)_seg
 # uncenter this back to the original functional space
 @Align_Centers -base $original_functional -dset __tmp+orig -no_cp
@@ -77,12 +79,27 @@ funcsegprefix=$(@GetAfniPrefix $original_functional)_seg
 #   segmentation dataset and mark to be shown with integer colormap
 3drefit -cmap INT_CMAP $funcsegprefix+orig
 3drefit -copytables $warp_target $funcsegprefix+orig
-
 # cleanup tmp files
 rm __tmp*
 
+# warp the anatomical to functional-space
+anatprefix=$(@GetAfniPrefix $anatomical)_in_$(@GetAfniPrefix $original_functional)
+3dAllineate -1Dmatrix_apply ${funcprefix}_anat2func_mat.aff12.1D \
+  -base $func -master BASE -source $anatomical -prefix $anatprefix
+# uncenter this back to the original functional space
+@Align_Centers -base $original_functional -dset $anatprefix+orig -no_cp
+
+# warp the functional to anatomical-space
+warpedfuncprefix=$(@GetAfniPrefix $original_functional)_in_$(@GetAfniPrefix $anatomical)
+3dAllineate -1Dmatrix_apply ${funcprefix}_func2anat_mat.aff12.1D \
+  -base $anatomical -master BASE -source $func -prefix $warpedfuncprefix
+
 # convert output to nifti
-for result in $funcsegprefix+orig.HEAD $original_functional.HEAD; do
+for result in \
+  $funcsegprefix+orig.HEAD \
+  $anatprefix+orig.HEAD \
+  $warpedfuncprefix+orig.HEAD \
+  $original_functional.HEAD; do
   3dAFNItoNIFTI $result
   gzip $(@GetAfniPrefix $result).nii
   mv $(@GetAfniPrefix $result).nii.gz $OUT
