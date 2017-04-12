@@ -43,25 +43,29 @@ original_functional=$(preprocess_nifti $IN/functional/*)
 warp_target=$IN/warp_target/*
 
 # center to anatomical
-@Align_Centers -base $anatomical -dset $original_functional
+# -cm alignment gets the functional lower than a grid alignment, which is what
+# we want.
+@Align_Centers -base $anatomical -dset $original_functional -cm
 func=$(@GetAfniPrefix $original_functional)_shft+orig
 funcprefix=$(@GetAfniPrefix $func)
+# HACK HACK we toss this in to get our alignment _even lower_, so it's pretty close to the anatomical.
+# This helps align_epi_anat avoid giant_move.
+3drefit -dzorigin -4 $func
 
 # align to anatomical
-# XXX removed -giant_move
-# XXX does specifying that partial_axial help? XXX untested
-align_epi_anat.py -dset2 $func -dset1 $anatomical -dset2to1 -dset2_base 0 \
-  -suffix _func2anat -dset1_strip None -dset2_strip None \
-  -partial_coverage
-
-# XXX need 3dAllineate?? or is _func2anat enough?
+# This alignment function needs a lot of tweaking to deal with some of our data. Some notes on things that have
+# worked well and poorly:
+# -big_move often has worked pretty well. -giant_move tends to consider things that are a bit too far away.
+# -cost lpc is often bad, lpa seems to give mixed results. Best results seem to come from nmi/mi
+# -cmass nocmass can help sometimes, but requires having close alignment. read more here
+#     https://afni.nimh.nih.gov/afni/community/board/read.php?1,70410,70413#msg-70413
+# Because AFNI skull strip doesn't seem to work, we use 3dAutomask. it may be worth trying fsl bet for edge erosion
+# to help with matching.
+align_epi_anat.py -dset2 $func -dset1 $anatomical -dset2to1 -dset2_base 0 -suffix _func2anat \
+  -dset1_strip 3dAutomask -dset2_strip 3dAutomask -cost nmi -big_move
 
 # warp from warp_target to centered functional. This warp uses nearest neighbor
 # interpolation, which makes it appropriate for segmentations.
-# XXX need to make this into 3dAllineate xxxx
-#3dNwarpApply -ainterp NN -short -nwarp \
-#   "INV(${funcprefix}_func2anat_mat.aff12.1D)" \
-#   -source $warp_target -master $func -prefix __tmp
 cat_matvec -ONELINE ${funcprefix}_func2anat_mat.aff12.1D -I \
   > ${funcprefix}_anat2func_mat.aff12.1D
 

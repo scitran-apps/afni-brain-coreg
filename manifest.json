@@ -1,0 +1,33 @@
+{
+  "name": "afni-brain-coreg",
+  "label": "AFNI: Brain Co-Registration",
+  "description": "This Flywheel gear warps the supplied `warp_target` nifti image into the same space as the `functional` nifti image. The input `warp_target` should already be warped correctly to the `anatomical`. This gear generates a warp from the `functional` to the `anatomical` by using AFNI's `align_epi_anat.py`. The inverse of warp is applied to the `warp_target`.",
+  "author": "Carlos Correa <cgc@stanford.edu>",
+  "maintainer": "Carlos Correa <cgc@stanford.edu>",
+  "url": "https://github.com/scitran-apps/afni-brain-coreg",
+  "source": "https://github.com/scitran-apps/afni-brain-coreg",
+  "license": "GPL-2.0",
+  "flywheel": "0",
+  "version": "0.0.1",
+  "custom": {
+    "docker-image": "scitran/afni-brain-coreg:v0.0.1"
+  },
+  "inputs": {
+    "functional": {
+      "base": "file",
+      "type": { "enum": [ "nifti" ] },
+      "description": "Functional image."
+    },
+    "anatomical": {
+      "base": "file",
+      "type": { "enum": [ "nifti" ] },
+      "description": "Anatomical image that corresponds to warp input. Should have been taken around the same time as the functional."
+    },
+    "warp_target": {
+      "base": "file",
+      "type": { "enum": [ "nifti" ] },
+      "description": "Image that we want to warp from anatomical-space to functional-space."
+    }
+  },
+  "config": {}
+}
